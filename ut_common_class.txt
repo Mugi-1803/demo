@@ -1,0 +1,909 @@
+package com.simplr.app.androidpilot.utility;
+
+import android.annotation.SuppressLint;
+import android.content.Context;
+import android.content.SharedPreferences;
+import android.os.Build;
+import android.provider.Settings;
+import android.telephony.TelephonyManager;
+import android.util.Log;
+import android.widget.Toast;
+
+import com.google.common.reflect.TypeToken;
+import com.google.gson.Gson;
+import com.simplr.app.androidpilot.MainActivity;
+import com.simplr.app.androidpilot.access.DA_MessageConfig;
+import com.simplr.app.androidpilot.access.DA_System;
+import com.simplr.app.androidpilot.access.DA_SystemList;
+import com.simplr.app.androidpilot.application.TimeOutApp;
+import com.simplr.app.androidpilot.entity.BE_ListConfig;
+import com.simplr.app.androidpilot.entity.BE_MessageConfig;
+import com.simplr.app.androidpilot.entity.BE_QueryConfig;
+import com.simplr.app.androidpilot.entity.BE_QueryFields;
+import com.simplr.app.androidpilot.entity.BE_System;
+import com.simplr.app.androidpilot.entity.BE_SystemList;
+
+import java.io.FileWriter;
+import java.lang.reflect.Type;
+import java.text.DateFormat;
+import java.text.SimpleDateFormat;
+import java.util.ArrayList;
+import java.util.Calendar;
+import java.util.ConcurrentModificationException;
+import java.util.Date;
+import java.util.HashMap;
+import java.util.HashSet;
+import java.util.List;
+import java.util.Set;
+
+/**
+ * Created by nicodian on 4/10/17.
+ */
+
+public class UT_Common implements UT_Constants {
+    private Context context;
+    private UT_SystemConfig ut_sp;
+    boolean bPalletScanned = false;
+    String sScannedPallet = "";
+    String newPalletNo = "";
+    String PalletNo = "";
+    UT_DateTime ut_dateTime;
+    MainActivity mainActivity;
+
+    FileHelper fileHelper;
+    FileWriter fileWriter;
+    DA_System da_System;
+    ArrayList<BE_MessageConfig> messageArrayList;
+
+    public UT_Common(Context context) {
+        this.context = context;
+        this.ut_sp = new UT_SystemConfig(context);
+        ut_dateTime = new UT_DateTime();
+        fileHelper = ((TimeOutApp) context.getApplicationContext()).fileHelper;
+        fileWriter = ActionConfig.writer;
+        da_System = new DA_System(context);
+
+        SharedPreferences sharedPreferences=context.getSharedPreferences("MESSAGECONFIG",Context.MODE_PRIVATE);
+        Gson gson = new Gson();
+        String json = sharedPreferences.getString("MESSAGECONFIG", "");
+
+        Type type = new TypeToken<ArrayList<BE_MessageConfig>>() {}.getType();
+        messageArrayList = gson.fromJson(json, type);
+
+    }
+
+    public int getConfigMaxHeight(ArrayList<BE_ListConfig> configs) {
+        int rtn = 0;
+        for (BE_ListConfig config : configs) {
+            rtn = Math.max(config.HeaderHeight, rtn);
+        }
+        return rtn;
+    }
+
+
+    public String getQuery(BE_QueryConfig config, StringBuilder searchFilter, HashMap<String, String> formValues, HashMap<String, String> listValues, HashMap<String, String> paramForm, HashMap<String, String> paramList, String qtyRoundingDigits, String priceRoundingDigits, String amountRoundingDigits, String fixedLot, ArrayList<BE_System> system, HashMap<String, String> surveyValue, String paramScreen) {
+        String rtn;
+        System.out.println("searchFilter "+searchFilter);
+        if (searchFilter != null) {
+            rtn = config.QueryText + " " + searchFilter + " " + config.GroupText + " " + config.OrderText;
+        } else {
+            rtn = config.QueryText + " " + config.GroupText + " " + config.OrderText;
+        }
+
+
+        int start = rtn.indexOf("{");
+        int end;
+        String key;
+        int trial = 0;
+        while (start > -1 && trial < 100) {
+            end = rtn.indexOf("}");
+            key = rtn.substring(start + 1, end);
+
+            rtn = replaceKey(mainActivity, rtn, key, formValues, listValues, paramForm, paramList, qtyRoundingDigits, priceRoundingDigits, amountRoundingDigits, fixedLot, system, surveyValue, paramScreen);
+
+            start = rtn.indexOf("{");
+            trial++;    //safeguard
+        }
+        Log.d("getQueryT", rtn);
+        return rtn.trim();
+    }
+
+    public String getQueryForm(String config, HashMap<String, String> formValues, HashMap<String, String> listValues, HashMap<String, String> paramForm, HashMap<String, String> paramList, String qtyRoundingDigits, String priceRoundingDigits, String amountRoundingDigits, String fixedLot, ArrayList<BE_System> system, HashMap<String, String> surveyValue, String paramScreen) {
+        String rtn = config;
+
+        int start = rtn.indexOf("{");
+        int end;
+        String key;
+        int trial = 0;
+        while (start > -1 && trial < 100) {
+            end = rtn.indexOf("}");
+            key = rtn.substring(start + 1, end);
+
+            rtn = replaceKey(mainActivity, rtn, key, formValues, listValues, paramForm, paramList, qtyRoundingDigits, priceRoundingDigits, amountRoundingDigits, fixedLot, system, surveyValue, paramScreen);
+
+            start = rtn.indexOf("{");
+            trial++;    //safeguard
+        }
+        Log.d("getQuery", rtn);
+        return rtn.trim();
+    }
+
+    public String getQueryClean(BE_QueryConfig config, StringBuilder searchFilter, HashMap<String, String> formValues, HashMap<String, String> listValues, HashMap<String, String> paramForm, HashMap<String, String> paramList, String qtyRoundingDigits, String priceRoundingDigits, String amountRoundingDigits, String fixedLot, ArrayList<BE_System> system, HashMap<String, String> surveyValue, String paramScreen) {
+        String rtn;
+        if (searchFilter != null) {
+            rtn = config.QueryText + " " + searchFilter + " " + config.GroupText + " " + config.OrderText;
+        } else {
+            rtn = config.QueryText + " " + config.GroupText + " " + config.OrderText;
+        }
+
+        return rtn.trim();
+    }
+
+    @SuppressLint("HardwareIds")
+    private String replaceKey(Context mainActivity, String query, String key, HashMap<String, String> formValues, HashMap<String, String> listValues, HashMap<String, String> paramForm, HashMap<String, String> paramList, String qtyRoundingDigits, String priceRoundingDigits, String amountRoundingDigits, String fixedLot, ArrayList<BE_System> system, HashMap<String, String> surveyValue, String paramScreen) {
+
+        String rtn = query;
+        try {
+
+            System.out.println("replaceQuery : " + rtn);
+            fileHelper.fileWriter("replaceQuery : " + rtn, fileWriter);
+            System.out.println("formValues : " + formValues);
+            fileHelper.fileWriter("replace formValues : " + formValues, fileWriter);
+
+            System.out.println("listValues : " + listValues);
+            fileHelper.fileWriter("replace listValues : " + listValues, fileWriter);
+
+            String projectName = ut_sp.getStringValue(SP_PROJECTNAME);
+
+            String ssr;
+            Log.d("replaceKey=== ", key);
+            fileHelper.fileWriter("replaceKey : " + key, fileWriter);
+
+            if (key.toUpperCase().startsWith(SQL_SYSTEM)) {
+                System.out.println("SYSTEM : " + ut_sp.getStringValue(key.toUpperCase()));
+
+                rtn = rtn.replace("{" + key + "}", addSingleQuote(ut_sp.getStringValue(key.toUpperCase())));
+
+            } else if (key.toUpperCase().equals(SQL_ORIENTATION)) {
+                rtn = rtn.replace("{" + key + "}", "'1'");
+
+            } else if (key.toUpperCase().equals(SQL_AGENTID)) {
+                rtn = rtn.replace("{" + key + "}", "'" + ut_sp.getStringValue(SP_AGENT_ID) + "'");
+
+            } else if (key.toUpperCase().equals(SQL_CUSTNO)) {
+                String val = ut_sp.getStringValue(SP_CUSTOMER_ID);
+                rtn = rtn.replace("{" + key + "}", addSingleQuote(val));
+
+            } else if (key.toUpperCase().equals(SQL_CUSTOMERID)) {
+                String val = ut_sp.getStringValue(SP_CUSTOMER_ID);
+                rtn = rtn.replace("{" + key + "}", addSingleQuote(val));
+
+            } else if (key.toUpperCase().equals(SQL_ACCESSLEVEL)) {
+                rtn = rtn.replace("{" + key + "}", addSingleQuote(ut_sp.getStringValue(SP_ACCESS_LEVEL)));
+
+            } else if (key.toUpperCase().equals(SP_ACCESS_LEVEL_TEMP)) {
+                rtn = rtn.replace("{" + key + "}", addSingleQuote(ut_sp.getStringValue(SP_ACCESS_LEVEL_TEMP)));
+
+            } else if (key.toUpperCase().equals(SQL_PDAID) || key.toUpperCase().equals(SQL_MDTNO)) {
+                rtn = rtn.replace("{" + key + "}", addSingleQuote(ut_sp.getStringValue(SP_PDA_ID)));
+
+            } else if (key.toUpperCase().equalsIgnoreCase(SQL_SEARCHTEXTVAL) || key.toUpperCase().equalsIgnoreCase(SQL_SEARCHTEXTVALUE) ){
+
+                Toast.makeText(context, "one "+key, Toast.LENGTH_SHORT).show();
+                rtn = rtn.replace("{" + key + "}", addSingleQuote(formValues.get("searchvalue")));
+                System.out.println("OutputValue "+rtn);
+
+            } else if (key.equalsIgnoreCase("FORMVIEW."+SQL_BARCODE)) {
+                System.out.println("BarCodeValue321 "+ SQL_BARCODE);
+                Toast.makeText(context, "Barcode replace "+SQL_BARCODE, Toast.LENGTH_SHORT).show();
+                rtn = rtn.replace("{" + key + "}", addSingleQuote(formValues.get(SQL_BARCODE.toUpperCase())));
+//                rtn = rtn.replace("{" + key + "}", addSingleQuote(formValues.get("searchvalue")));
+
+            } else if (key.toUpperCase().equals(SQL_TodayWorkingDays)) {
+
+                int TodayWorkingDays = 0;
+                DA_SystemList da_systemList = new DA_SystemList(context);
+                BE_SystemList value = da_systemList.getSystemList("NotWorkingDays");
+
+                String NotWorkingDays = value.SystemValue;
+
+
+                NotWorkingDays = (NotWorkingDays == null) ? "" : NotWorkingDays;//NotWorkingDays = new String("0,6");
+                NotWorkingDays = new String(NotWorkingDays);
+                String res = NotWorkingDays;
+                Date date = new Date();
+                Date firstDay = new Date(date.getYear(), date.getMonth(), 1);
+                Date date2 = new Date();
+                int lastDay = date2.getDate();
+
+                int firstDay2 = firstDay.getDate();
+
+                for (int i = firstDay2; i <= lastDay; i++) {
+                    Date currentDayDate = new Date(date.getYear(), date.getMonth(), i);
+                    int currentDay = currentDayDate.getDay();
+                    //currentDay = (currentDay == 0) ? 6 : currentDay;
+                    currentDay = (currentDay == 0) ? 0 : currentDay;
+                    if (res.indexOf(currentDay) == -1) {
+                        TodayWorkingDays = TodayWorkingDays + 1;
+                    }
+                }
+
+                TodayWorkingDays = (TodayWorkingDays == 0) ? 1 : TodayWorkingDays;
+
+                rtn = rtn.replace("{" + key + "}", addSingleQuote(String.valueOf(TodayWorkingDays)));
+
+            } else if (key.toUpperCase().equals(SQL_ROUTEDAY)) {
+
+                Calendar c = Calendar.getInstance();
+                int dayOfWeek = c.get(Calendar.DAY_OF_WEEK) - 1;
+
+                rtn = rtn.replace("{" + key + "}", addSingleQuote(String.valueOf(dayOfWeek)));
+
+            } else if (key.toUpperCase().equals(SQL_ROUTEWEEk)) {
+
+                DA_SystemList da_systemList = new DA_SystemList(context);
+                BE_SystemList value = da_systemList.getSystemList("NoOfWeeks");
+
+
+                Calendar c = Calendar.getInstance();
+                int weekOfYear = c.get(Calendar.WEEK_OF_YEAR) % 4; //// Logic for JSU client
+                if (weekOfYear == 0) {
+                    weekOfYear = 4;
+                }
+
+                try {
+                    if (value.SystemValue.equals("1")) {
+                        weekOfYear = 1;
+                    } else if (value.SystemValue.equals("2")) {
+                        if (weekOfYear == 0) {
+                            weekOfYear = 2;
+                        } else if (weekOfYear == 1) {
+                            weekOfYear = 1;
+                        } else if (weekOfYear == 2) {
+                            weekOfYear = 2;
+                        } else if (weekOfYear == 3) {
+                            weekOfYear = 1;
+                        }
+                    }
+                } catch (Exception e) {
+                    e.printStackTrace();
+                }
+
+                rtn = rtn.replace("{" + key + "}", addSingleQuote("Week" + String.valueOf(weekOfYear)));
+
+            } else if (key.equals(SQL_SalesAgentID)) {
+                rtn = rtn.replace("{" + key + "}", "'" + ut_sp.getStringValue(SP_AGENT_ID) + "'");
+
+            } else if (key.toUpperCase().equals(SQL_CURRENTMONTHWEEK)) {
+
+                Calendar cal = Calendar.getInstance();
+                cal.set(Calendar.YEAR, cal.get(Calendar.YEAR));
+                cal.set(Calendar.MONTH, cal.get(Calendar.MONTH));
+                cal.set(Calendar.DAY_OF_MONTH, 1);
+                Set<String> weeks = new HashSet<>();
+                int ndays = cal.getActualMaximum(Calendar.DAY_OF_MONTH);
+                for (int i = 0; i < ndays; i++) {
+                    weeks.add("'" + "Week" + cal.get(Calendar.WEEK_OF_YEAR) + "'");
+                    cal.add(Calendar.DATE, 1);
+                }
+                rtn = rtn.replace("{" + key + "}", String.valueOf(weeks).replace("[", "(").replace("]", ")"));
+
+                //   rtn = rtn.replace("'['", "");
+            } else if (key.toUpperCase().equals(SQL_MISSEDDATE)) {
+
+                Calendar c = Calendar.getInstance();
+                int weekOfYear = c.get(Calendar.WEEK_OF_YEAR) % 4; //// Logic for JSU client
+                if (weekOfYear == 0) {
+                    weekOfYear = 4;
+                }
+
+                rtn = rtn.replace("{" + key + "}", addSingleQuote("Week" + String.valueOf(weekOfYear)));
+
+            } else if (key.toUpperCase().equals(SQL_TRANSDOCNO)) {
+                String doc_no = "";
+                if (doc_no.equals("")) {
+                    updateDocNo();
+                    doc_no = ut_sp.getStringValue(SP_TRANS_DOC_NO);
+                }
+                rtn = rtn.replace("{" + key + "}", addSingleQuote(doc_no));
+
+            } else if (key.equals("Response.Result")) {
+                String respone = ut_sp.getStringValue("Response.Result");
+                if (respone.equals("")) {
+                    respone = ut_sp.getStringValue("Response.Result");
+                }
+
+
+                rtn = rtn.replace("{" + key + "}", addSingleQuote(respone));
+
+            } else if (key.toUpperCase().equals(SQL_JAVASCRIPTRESULT)) {
+                String doc_no = ut_sp.getStringValue(SQL_GENERATEDOCNO);
+                //  if (doc_no.equals("")) {
+                //     updateDocNo();
+                doc_no = ut_sp.getStringValue(SQL_JAVASCRIPTRESULT);
+                //  }
+
+
+                rtn = rtn.replace("{" + key + "}", addSingleQuote(doc_no));
+
+            } else if (key.toUpperCase().equals(SQL_GENERATEDOCNO)) {
+                String doc_no = ut_sp.getStringValue(SQL_GENERATEDOCNO);
+                //  if (doc_no.equals("")) {
+                //     updateDocNo();
+                doc_no = ut_sp.getStringValue(SQL_GENERATEDOCNO);
+                //  }
+
+
+                rtn = rtn.replace("{" + key + "}", addSingleQuote(doc_no));
+
+            } else if (key.toUpperCase().equals(SQL_GENERATEDOCNO)) {
+                String doc_no = ut_sp.getStringValue(SQL_GENERATEDOCNO);
+                //  if (doc_no.equals("")) {
+                //     updateDocNo();
+                doc_no = ut_sp.getStringValue(SQL_GENERATEDOCNO);
+                //  }
+                rtn = rtn.replace("{" + key + "}", addSingleQuote(doc_no));
+
+            } else if (key.toUpperCase().equals(IN_PARAM_SCREENS)) {
+                if (paramScreen != null && !paramScreen.isEmpty()) {
+                    rtn = rtn.replace("{" + key + "}", addSingleQuote(paramScreen));
+                } else {
+                    rtn = rtn.replace("{" + key + "}", addSingleQuote(""));
+                }
+            } else if (key.startsWith(SQL_FORMVIEW)) {
+                if (formValues != null) {
+                    String[] temp = key.split("[.]");
+                    if (temp.length > 1) {
+
+//                    String projectName = ut_sp.getStringValue(SP_PROJECTNAME);
+                        System.out.println("projectName : " + projectName);
+
+                        String value = formValues.get(temp[1].toUpperCase());
+                        if (key.toUpperCase().contains("Date".toUpperCase())) {
+                            if (projectName.equals("GHLUAT")) {
+                                rtn = rtn.replace("{" + key + "}", addSingleQuote(ut_dateTime.isDateFormatValidReplaceQueryGHL(system, value)));
+                            } else {
+                                rtn = rtn.replace("{" + key + "}", addSingleQuote(ut_dateTime.isDateFormatValidReplaceQuery(system, value)));
+                            }
+                        } else if (key.toUpperCase().contains("Time".toUpperCase())) {
+                            if (projectName.equals("GHLUAT")) {
+                                rtn = rtn.replace("{" + key + "}", addSingleQuote(ut_dateTime.isTimeFormatValidReplaceQueryGHL(system, value)));
+                            } else {
+                                rtn = rtn.replace("{" + key + "}", addSingleQuote(ut_dateTime.isTimeFormatValidReplaceQuery(system, value)));
+                            }
+                        } else if (key.toUpperCase().contains("DateTime".toUpperCase())) {
+                            if (projectName.equals("GHLUAT")) {
+                                rtn = rtn.replace("{" + key + "}", addSingleQuote(ut_dateTime.isDateTimeFormatValidGHL(system, value)));
+                            } else {
+                                rtn = rtn.replace("{" + key + "}", addSingleQuote(ut_dateTime.isDateTimeFormatValidQuery(system, value)));
+                            }
+                        } else {
+                            if (key.toUpperCase().startsWith("FORMVIEW.MULTICOMBOBOX")) {
+                                String value2 = formValues.get("MULTICOMBOBOX." + temp[2].toUpperCase());
+                                System.out.println("MULTICOMBOBOX value : " + value2);
+                                if (value2.contains("'")) {
+                                    rtn = rtn.replace("{" + key + "}", value2);
+                                } else {
+                                    rtn = rtn.replace("{" + key + "}", addSingleQuote(value2));
+                                }
+                            } else {
+                                rtn = rtn.replace("{" + key + "}", addSingleQuote(value));
+                            }
+                        }
+                    }
+
+                } else {
+                    String value = "";
+
+                    rtn = rtn.replace("{" + key + "}", addSingleQuote(value));
+                }
+
+            } else if (key.toUpperCase().startsWith(SQL_ROOT)) {
+                if (formValues != null) {
+                    String[] temp = key.split("[.]");
+                    if (temp.length > 1) {
+                        String value = formValues.get(temp[1].toUpperCase());
+                        rtn = rtn.replace("{" + key + "}", addSingleQuote(value));
+                    }
+                } else {
+                    String value = "";
+
+                    rtn = rtn.replace("{" + key + "}", addSingleQuote(value));
+                }
+
+            } else if (key.startsWith(SQL_LISTVIEW)) {
+                Toast.makeText(context, "listValue", Toast.LENGTH_SHORT).show();
+                if (listValues != null) {
+                    String[] temp = key.split("[.]");
+                    if (temp.length > 1) {
+
+                        if (temp[1].equalsIgnoreCase("DATECLICK")) {
+                            String value = ut_sp.getStringValue(SQL_LIST_DATECLICK);
+                            System.out.println("KEY : " + key);
+                            if (key.contains("DATE")) {
+                                rtn = rtn.replace("{" + key + "}", addSingleQuote(ut_dateTime.isDateFormatValidReplaceQuery(system, value)));
+                            } else {
+                                rtn = rtn.replace("{" + key + "}", addSingleQuote(value));
+                            }
+
+                        } else {
+                            String value = listValues.get(temp[1].toUpperCase());
+                            System.out.println("KEY : " + key);
+                            if (key.contains("Date")) {
+                                rtn = rtn.replace("{" + key + "}", addSingleQuote(ut_dateTime.isDateFormatValidReplaceQuery(system, value)));
+                            } else {
+                                rtn = rtn.replace("{" + key + "}", addSingleQuote(value));
+                            }
+
+                        }
+                    }
+                } else {
+                    Toast.makeText(context, "emptyList", Toast.LENGTH_SHORT).show();
+                    String value = "";
+                    rtn = rtn.replace("{" + key + "}", addSingleQuote(value));
+                }
+
+
+            } else if (key.startsWith(SQL_PARAM_FORM)) {
+                if (paramForm != null) {
+                    String[] temp = key.split("[.]");
+                    if (temp.length > 2) {
+                        String value = paramForm.get(temp[2].toUpperCase());
+                        Log.d("SQL_PARAM_FORM", temp[2].toUpperCase() + " -- value " + value);
+
+//                    String projectName = ut_sp.getStringValue(SP_PROJECTNAME);
+
+                        if (key.contains("Date")) {
+                            if (projectName.equals("GHLUAT")) {
+                                rtn = rtn.replace("{" + key + "}", addSingleQuote(ut_dateTime.isDateFormatValidReplaceQueryGHL(system, value)));
+                            } else {
+                                rtn = rtn.replace("{" + key + "}", addSingleQuote(ut_dateTime.isDateFormatValidReplaceQuery(system, value)));
+                            }
+                        } else if (key.contains("Time")) {
+                            if (projectName.equals("GHLUAT")) {
+                                rtn = rtn.replace("{" + key + "}", addSingleQuote(ut_dateTime.isTimeFormatValidReplaceQueryGHL(system, value)));
+                            } else {
+                                rtn = rtn.replace("{" + key + "}", addSingleQuote(ut_dateTime.isTimeFormatValidReplaceQuery(system, value)));
+                            }
+                        } else if (key.contains("DateTime")) {
+                            if (projectName.equals("GHLUAT")) {
+                                rtn = rtn.replace("{" + key + "}", addSingleQuote(ut_dateTime.isDateTimeFormatValidGHL(system, value)));
+                            } else {
+                                rtn = rtn.replace("{" + key + "}", addSingleQuote(ut_dateTime.isDateTimeFormatValidQuery(system, value)));
+                            }
+                        } else {
+                            rtn = rtn.replace("{" + key + "}", addSingleQuote(value));
+
+                        }
+                    }
+                }
+
+            } else if (key.startsWith(SQL_PARAM_LIST)) {
+                if (paramList != null) {
+                    String[] temp = key.split("[.]");
+                    if (temp.length > 2) {
+
+                        if (XML_SOLUTION_NAME.equals("WMS")) {
+                            system = da_System.getBESystems();
+                        } else {
+                            system = da_System.getBESystems2();
+                        }
+
+                        String value = paramList.get(temp[2].toUpperCase());
+
+
+                        if (key.contains("Date")) {
+                            if (projectName.equals("GHLUAT")) {
+                                rtn = rtn.replace("{" + key + "}", addSingleQuote(ut_dateTime.isDateFormatValidReplaceQueryGHL(system, value)));
+                            } else {
+                                rtn = rtn.replace("{" + key + "}", addSingleQuote(ut_dateTime.isDateFormatValidReplaceQuery(system, value)));
+                            }
+                        } else if (key.contains("Time")) {
+                            if (projectName.equals("GHLUAT")) {
+                                rtn = rtn.replace("{" + key + "}", addSingleQuote(ut_dateTime.isTimeFormatValidReplaceQueryGHL(system, value)));
+                            } else {
+                                rtn = rtn.replace("{" + key + "}", addSingleQuote(ut_dateTime.isTimeFormatValidReplaceQuery(system, value)));
+                            }
+                        } else if (key.contains("DateTime")) {
+                            if (projectName.equals("GHLUAT")) {
+                                rtn = rtn.replace("{" + key + "}", addSingleQuote(ut_dateTime.isDateTimeFormatValidGHL(system, value)));
+                            } else {
+                                rtn = rtn.replace("{" + key + "}", addSingleQuote(ut_dateTime.isDateTimeFormatValidQuery(system, value)));
+                            }
+                        } else {
+                            rtn = rtn.replace("{" + key + "}", addSingleQuote(value));
+
+                        }
+                    }
+                }
+
+            } else if (key.startsWith(SQL_PARAM_JS)) {     /// For Js File Replace query
+                if (listValues != null) {
+                    String[] temp = key.split("[.]");
+                    if (temp.length > 1) {
+                        String value = listValues.get(temp[1].toUpperCase());
+                        rtn = rtn.replace("{" + key + "}", addSingleQuote(value));
+                    }
+                } else {
+                    String value = "";
+                    rtn = rtn.replace("{" + key + "}", addSingleQuote(value));
+                }
+
+
+            } else if (key.equalsIgnoreCase(SQL_LONGITUDE)) {
+                String longitude = ut_sp.getStringValue(SQL_LONGITUDE);
+                String defaultValue = "0.0";
+                if (longitude.isEmpty()) {
+                    rtn = rtn.replace("{" + key + "}", addSingleQuote(defaultValue));
+                } else {
+                    rtn = rtn.replace("{" + key + "}", addSingleQuote(longitude));
+                }
+
+            } else if (key.equalsIgnoreCase(SQL_LATITUDE)) {
+                String latitude = ut_sp.getStringValue(SQL_LATITUDE);
+                String defaultValue = "0.0";
+                if (latitude.isEmpty()) {
+                    rtn = rtn.replace("{" + key + "}", addSingleQuote(defaultValue));
+                } else {
+                    rtn = rtn.replace("{" + key + "}", addSingleQuote(latitude));
+                }
+
+            } else if (key.startsWith(SQL_LONGITUDEFINDER)) {
+                String longitude = formValues.get(SQL_LONGITUDEFINDER);
+                String defaultValue = "0.0";
+                if (longitude != null) {
+                    if (longitude.isEmpty()) {
+                        rtn = rtn.replace("{" + key + "}", addSingleQuote(defaultValue));
+                    } else {
+                        rtn = rtn.replace("{" + key + "}", addSingleQuote(longitude));
+                    }
+                } else {
+                    rtn = rtn.replace("{" + key + "}", addSingleQuote(defaultValue));
+                }
+            } else if (key.startsWith(SQL_LATITUDEFINDER)) {
+                String latitude = formValues.get(SQL_LATITUDEFINDER);
+                String defaultValue = "0.0";
+                if (latitude != null) {
+                    if (latitude.isEmpty()) {
+                        rtn = rtn.replace("{" + key + "}", addSingleQuote(defaultValue));
+                    } else {
+                        rtn = rtn.replace("{" + key + "}", addSingleQuote(latitude));
+                    }
+                } else {
+                    rtn = rtn.replace("{" + key + "}", addSingleQuote(defaultValue));
+                }
+            } else if (key.startsWith(SQL_ADDRESSFINDER)) {
+                rtn = rtn.replace("{" + key + "}", addSingleQuote(formValues.get(SQL_ADDRESSFINDER)));
+
+            } else if (key.startsWith(SQL_BARANGAYFINDER)) {
+                rtn = rtn.replace("{" + key + "}", addSingleQuote(formValues.get(SQL_BARANGAYFINDER)));
+
+            } else if (key.startsWith(SQL_PROVINCEFINDER)) {
+                rtn = rtn.replace("{" + key + "}", addSingleQuote(formValues.get(SQL_PROVINCEFINDER)));
+
+            } else if (key.startsWith(SQL_CITYFINDER)) {
+                rtn = rtn.replace("{" + key + "}", addSingleQuote(formValues.get(SQL_CITYFINDER)));
+
+            } else if (key.startsWith(SQL_LOCATIONFINDER)) {
+                rtn = rtn.replace("{" + key + "}", addSingleQuote(formValues.get(SQL_LOCATIONFINDER)));
+
+            } else if (key.toUpperCase().equals(SQL_TRANSDATE)) {
+                DateFormat dateFormat = new SimpleDateFormat("yyyy-MM-dd HH:mm:ss");
+                Date date = new Date();
+                String finalDate = dateFormat.format(date);
+
+                rtn = rtn.replace("{" + key + "}", "'" + finalDate + "'");
+            } else if (key.startsWith(SQL_BEFORE)) {
+                ssr = formValues.get(SQL_BEFORE);
+                rtn = rtn.replace("{" + key + "}", addSingleQuote(formValues.get(SQL_BEFORE)));
+            } else if (key.startsWith(SQL_AFTER)) {
+                ssr = formValues.get(SQL_AFTER);
+                rtn = rtn.replace("{" + key + "}", addSingleQuote(formValues.get(SQL_AFTER)));
+
+            } else if (key.startsWith(SQL_Menu)) {
+                String value[] = key.split("[.]");
+                rtn = rtn.replace("{" + key + "}", addSingleQuote(formValues.get(value[1].toUpperCase())));
+
+            } else if (key.equals(SQL_FontSize)) {
+                rtn = rtn.replace("{" + key + "}", addSingleQuote(ut_sp.getStringValue(SQL_FontSize)));
+            } else if (key.equals(SQL_DEVICEID)) {
+
+                String ids = "";
+                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) {
+                    ids = Settings.Secure.getString(context.getContentResolver(), Settings.Secure.ANDROID_ID);
+                } else {
+                    TelephonyManager manager = (TelephonyManager) context.getSystemService(Context.TELEPHONY_SERVICE);
+                    ids = manager.getDeviceId();
+                }
+
+//            ids="bab0be2374277dd0";
+
+                rtn = rtn.replace("{" + key + "}", addSingleQuote(ids));
+            } else if (key.equals(AN_SyncFailedResult)) {
+                rtn = rtn.replace("{" + key + "}", addSingleQuote(ut_sp.getStringValue(AN_SyncFailedResult)));
+            } else if (key.toUpperCase().equals(SQL_Broadcast)) {
+                rtn = rtn.replace("{" + key + "}", addSingleQuote(formValues.get(SQL_Broadcast)));
+            } else if (key.toUpperCase().equals("POPUPWINDOW.TAG")) {
+                rtn = rtn.replace("{" + key + "}", addSingleQuote(formValues.get("POPUPWINDOW.TAG")));
+            } else if (key.equals(SQL_AccessLevelUpdate)) {
+                rtn = rtn.replace("{" + key + "}", addSingleQuote(ut_sp.getStringValue(SQL_AccessLevelUpdate)));
+            } else if (key.startsWith("SearchView.")) {
+                String value[] = key.split("[.]");
+                rtn = rtn.replace("{" + key + "}", addSingleQuote(ut_sp.getStringValue(value[1].toUpperCase())));
+            } else if (key.startsWith(SQL_MESSAGECONFIG)) {
+
+                String[] keys = key.split("[.]");
+                String language = ut_sp.getStringValue(SP_LANGUAGE);
+                String screenName = ut_sp.getStringValue(IN_SCREEN_NAME);
+
+                DA_MessageConfig da_messageConfig = new DA_MessageConfig(context);
+                String messageText = da_messageConfig.getMessageConfigs(screenName, language, keys[1]);
+
+                rtn = rtn.replace("{" + key + "}", addSingleQuote(messageText));
+
+            } else if (key.contains(SP_QTY_ROUNDING_DIGITS)) {
+                rtn = rtn.replace("{" + SP_QTY_ROUNDING_DIGITS + "}", qtyRoundingDigits);
+            } else if (key.contains("QtyRoundingDigits")) {
+                rtn = rtn.replace("{" + "QtyRoundingDigits" + "}", qtyRoundingDigits);
+            } else if (key.contains(SP_AMOUNT_ROUNDING_DIGITS)) {
+                rtn = rtn.replace("{" + SP_AMOUNT_ROUNDING_DIGITS + "}", amountRoundingDigits);
+            } else if (key.contains(SP_PRICE_ROUNDING_DIGITS)) {
+                rtn = rtn.replace("{" + SP_PRICE_ROUNDING_DIGITS + "}", priceRoundingDigits);
+            }
+            else if (key.contains(SP_FIXEDLOT)) {
+                rtn = rtn.replace("{" + SP_FIXEDLOT + "}", fixedLot);
+
+            } else if (key.contains(SP_RECEIVELOTNO)) {
+                rtn = rtn.replace("{" + SP_RECEIVELOTNO + "}", fixedLot);
+
+            } else if (key.contains(SP_NEWPALLETNO)) {
+
+                if (rtn.equalsIgnoreCase("Lot Details_USER_AddRow")) {
+                    if (bPalletScanned == true) {
+                        bPalletScanned = false;
+                        newPalletNo = sScannedPallet;
+                        PalletNo = sScannedPallet;
+                        rtn = rtn.replace("{" + key + "}", sScannedPallet);
+
+                    }
+
+                }
+                String sNewPalletNo = "";
+                if (system.get(0).IsPallet != null || system.get(0).IsPallet.equalsIgnoreCase("true")) {
+                    sNewPalletNo = ((MainActivity) mainActivity).GetNextRunningNo("PrePalletNo", "LenPalletNo", "LastPalletNo", "Pallet:PalletNo");
+                    rtn = rtn.replace("{" + key + "}", sNewPalletNo);
+
+                }
+            } else if (key.contains(SP_NEWLOTNO)) {
+
+                DateFormat dfDate = new SimpleDateFormat("yyyy-MM-dd");
+                String ExpiryDate = dfDate.format(Calendar.getInstance().getTime());
+                ExpiryDate = ExpiryDate + "00:00:00";
+                rtn = rtn.replace("{" + key + "}", ((MainActivity) mainActivity).GetNewLotNo(paramList.get(SP_ITEMNO), paramList.get(SP_PONO), "", ExpiryDate, ""));
+
+            } else if (key.contains(SP_EXPCALDATE)) {
+                DateFormat dfDate = new SimpleDateFormat("yyyy-MM-dd");
+                String dtExpiryDate = dfDate.format(Calendar.getInstance().getTime());
+                dtExpiryDate = dtExpiryDate + "00:00:00";
+                if (paramList.get(SP_EXPCALDATE) != null || paramList.get(SP_EXPCALDATE) != " ") {
+                    String expCalculation = paramList.get(SP_EXPCALDATE);
+                    String offset = "";
+                    if (expCalculation.indexOf("Y") > 0) {
+                        offset = expCalculation.replace("/Y/g", "");
+                        dtExpiryDate = AddDate(offset, "Y");
+                    } else if (expCalculation.indexOf("M") > 0) {
+                        offset = expCalculation.replace("/M/g", "");
+                        dtExpiryDate = AddDate(offset, "M");
+                    } else if (expCalculation.indexOf("D") > 0) {
+                        offset = expCalculation.replace("/D/g", "");
+                        dtExpiryDate = AddDate(offset, "D");
+                    }
+                    Log.v("_dtExpiryDate", dtExpiryDate);
+                    dtExpiryDate = dfDate.format(dtExpiryDate);
+                    //  dtExpiryDate = DateFormat.dbDateFormatSQLiteDateOnly(_dtExpiryDate);
+                    dtExpiryDate = dtExpiryDate + "00:00:00";
+                    rtn = rtn.replace("{" + key + "}", dtExpiryDate);
+                }
+            } else if (key.contains(SP_DOCNO) || key.contains(SP_ITEMNO) || key.contains(SP_FROMBIN) || key.contains(SP_FROMLOC) || key.contains(SP_TOBIN) || key.contains(SP_TOLOC) || key.contains(SP_LINENO) || key.contains(SP_UOM) || key.contains(SP_CURPICKNO)) {
+                if (paramList != null) {
+
+                    String value = paramList.get(key.toUpperCase());
+                    rtn = rtn.replace("{" + key + "}", addSingleQuote(value));
+
+                }
+            } else if (key.contains(SQL_PARAM_SCREEN)) {
+                if (paramScreen != null) {
+                    //  String[] temp = key.split("[.]");
+                    //  if (key.length > 2) {
+                    //  String value = paramScreen.get(key.toUpperCase());
+                    rtn = rtn.replace("{" + key + "}", addSingleQuote(paramScreen));
+                    //  }
+                }
+            } else if (key.startsWith(SQL_SURVEY)) {
+                if (surveyValue != null) {
+                    String[] temp = key.split("[.]");
+                    if (temp.length > 1) {
+
+                        //     Log.d("SQL_FORMVIEW", temp[2].toUpperCase() + " -- value "+temp[1].toUpperCase()  );
+                        String value = surveyValue.get(temp[1].toUpperCase());
+                        rtn = rtn.replace("{" + key + "}", addSingleQuote(value));
+                    }
+                } else {
+                    String value = "";
+
+                    rtn = rtn.replace("{" + key + "}", addSingleQuote(value));
+                }
+
+            }
+
+        } catch (ConcurrentModificationException w) {
+            w.printStackTrace();
+        } catch (Exception e) {
+            e.printStackTrace();
+        }
+
+
+        return rtn;
+    }
+
+    private String AddDate(String offset, String offsetType) {
+       /* DateFormat dfDate = new SimpleDateFormat("yyyy-MM-dd");
+        String currentDate = dfDate.format(Calendar.getInstance().getTime());
+    ///    Date currentDate = Calendar.getInstance().getTime();
+
+        String year = currentDate;
+        int month = currentDate.getMonth();
+        int date = currentDate.getDate();
+        int hour = currentDate.getHours();
+        String expDate = null;
+        switch (offsetType){
+            case "Y":
+                expDate = new Date(year + offset, month, date, hour);
+
+        }
+
+        return expDate;*/
+        return null;
+    }
+
+
+    private String addSingleQuote(String value) {
+        String rtn = "''";
+        if (value != null) {
+
+            if (value.startsWith("'") && value.endsWith("'")) {
+                rtn = value;
+            } else if (value.equals("0") || value.equals("'0'") || value.equals("''")) {
+                rtn = "'" + value + "'";
+            } else {
+                rtn = "'" + value + "'";
+            }
+        }
+        return rtn;
+    }
+    //endregion
+
+    public void updateDocNo() {
+        String pda_id = ut_sp.getStringValue(SP_PDA_ID);
+        String doc_no = new UT_DateTime().getTransDocNo(new Date());
+        ut_sp.setStringValue(SP_TRANS_DOC_NO, pda_id + doc_no);
+    }
+
+
+    //Convert backend defined color (argb) to rgb
+    public String translateColor(int color) {
+        String rtn = HEX_WHITE;
+
+        if (color != 234244250 && color != 16777215) {
+            rtn = String.format("#%06X", 0xFFFFFF & color);
+
+        } else if (color == 234244250) {
+            rtn = HEX_GREY;
+        }
+//        else if (color == 16777215) {
+//            rtn = "#00FFFFFF";
+//        }
+
+        return rtn;
+    }
+
+
+    public boolean compareVersion(String system, String application) {
+        boolean rtn = false;
+
+        try {
+            String[] sys = system.split("[.]");
+            String[] app = application.split("[.]");
+            int length = Math.max(sys.length, app.length);
+
+            int digitSys, digitApp;
+            for (int i = 0; i < length; i++) {
+                if (sys.length > i) {
+                    digitSys = Integer.valueOf(sys[i]);
+                } else {
+                    digitSys = 0;
+                }
+
+                if (app.length > i) {
+                    digitApp = Integer.valueOf(app[i]);
+                } else {
+                    digitApp = 0;
+                }
+
+                if (digitSys > digitApp) {
+                    rtn = true;
+                    break;
+                }
+
+            }
+        } catch (Exception e) {
+            rtn = true;
+        }
+
+        return rtn;
+    }
+
+    public ArrayList<BE_QueryFields> getFieldsInQuery(String query) {
+        ArrayList<BE_QueryFields> rtn = new ArrayList<>();
+
+        String temp = query;
+        int start = temp.indexOf("[");
+        int end;
+        String key;
+        int trial = 0;
+        String[] val;
+
+        try {
+            while (start > -1 && trial < 100) {
+                end = temp.indexOf("]");
+                key = temp.substring(start + 1, end);
+
+                temp = temp.replace("[" + key + "]", key);
+                BE_QueryFields rec = new BE_QueryFields();
+
+                if (key.startsWith(SQL_FORMVIEW)) {
+                    rec.compCode = SQL_FORMVIEW;
+                } else if (key.startsWith(SQL_LISTVIEW)) {
+                    rec.compCode = SQL_LISTVIEW;
+                    System.out.println(" compCode "+SQL_LISTVIEW);
+                }
+
+                val = key.split("[.]");
+                if (val.length > 1) {
+                    rec.fieldName = val[1].toUpperCase();
+                }
+
+                if (!rec.fieldName.equals("") && !rec.compCode.equals("")) {
+                    rtn.add(rec);
+                }
+
+                start = temp.indexOf("[");
+
+                trial++;    //safeguard
+            }
+
+        } catch (Exception e) {
+            e.printStackTrace();
+        }
+
+        return rtn;
+    }
+    public static String getSearchValue(String qrData) {
+        // Check if searchvalue exists in the string
+        if (qrData.contains("searchvalue=")) {
+            // Remove curly braces
+            qrData = qrData.replace("{", "").replace("}", "");
+
+            // Split into key-value pairs
+            String[] keyValuePairs = qrData.split(", ");
+
+            // Iterate and find searchvalue
+            for (String pair : keyValuePairs) {
+                if (pair.startsWith("searchvalue=")) {
+                    return pair.split("=")[1]; // Return the extracted searchvalue
+                }
+            }
+        }
+        return "{No search value found}"; // If not found
+    }
+}
